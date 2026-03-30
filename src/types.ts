@@ -1,16 +1,15 @@
-export interface TickerData {
-    ticker: string;
-    yieldTtm: string;
-    lastPrice: string;
-    annualDiv: string;
-    frequency: string;
-    range52W: string;
-    exDate: string;
-    recordDate: string;
-    payDate: string;
-}
-
-export interface TickerBase {
-    ticker: string;
-    yieldTtm: string;
-}
+/**
+ * Legacy type aliases — re-exported from the canonical shared contract.
+ * Prefer importing directly from '@/src/shared/api' in new code.
+ */
+export type {
+  EnrichedTickerResponse as TickerData,
+  TickerSeed as TickerBase,
+  DataStatus,
+  AssetType,
+  DividendFrequency,
+  IsoDateField,
+  BatchEnrichRequest,
+  BatchEnrichResponse,
+  ApiError,
+} from '@/src/shared/api';
