@@ -50,7 +50,7 @@ async function fetchNasdaqData(
   for (const ac of ASSET_CLASSES) {
     const url = `https://api.nasdaq.com/api/${pathTemplate.replace('{ticker}', ticker)}?assetclass=${ac}`;
     try {
-      const resp = await fetchWithRetry(url, REQUEST_HEADERS, { timeoutMs: 8000, maxRetries: 2 });
+      const resp = await fetchWithRetry(url, REQUEST_HEADERS, { timeoutMs: 6000, maxRetries: 1 });
       const json = await resp.json() as { data?: unknown };
       if (json && json.data != null) {
         return { data: json, assetClass: ac };
