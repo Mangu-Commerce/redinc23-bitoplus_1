@@ -41,16 +41,33 @@ export type DividendsPayload = z.infer<typeof DividendsPayloadSchema>;
 
 export const SummaryPayloadSchema = z.object({
   data: z.object({
-    // Price fields — any of these may be present
+    // Traditional location (at root of data)
     lastSalePrice: z.string().optional(),
     lastSale: z.string().optional(),
     lastTrade: z.string().optional(),
-    // 52-week range fields
     fiftyTwoWeekLow: z.string().optional(),
     yearLow: z.string().optional(),
     fiftyTwoWeekHigh: z.string().optional(),
     yearHigh: z.string().optional(),
-  }).passthrough(), // allow extra fields without failure
+
+    // Nested locations (common for ETFs/Stocks)
+    primaryData: z.object({
+      lastSalePrice: z.string().optional(),
+      netChange: z.string().optional(),
+      percentageChange: z.string().optional(),
+    }).optional(),
+
+    summaryData: z.object({
+      FiftyTwoWeekHighLow: z.object({
+        label: z.string().optional(),
+        value: z.string().optional(),
+      }).optional(),
+      Yield: z.object({
+        label: z.string().optional(),
+        value: z.string().optional(),
+      }).optional(),
+    }).passthrough().optional(),
+  }).passthrough(),
 });
 
 export type SummaryPayload = z.infer<typeof SummaryPayloadSchema>;

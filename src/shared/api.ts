@@ -86,3 +86,22 @@ export interface ApiError {
   requestId: string;
   status: number;
 }
+
+export interface InsightRequest {
+  question: string;
+  tickers: Array<{
+    symbol: string;
+    name?: string | null;
+    price?: number | null;
+    annualDividend?: number | null;
+    dividendYield?: number | null;
+    exDividendDate?: string | null;
+    paymentFrequency?: string | null;
+  }>;
+}
+
+export interface InsightResponse {
+  answer: string;
+  warnings: string[];
+  model: string;
+}

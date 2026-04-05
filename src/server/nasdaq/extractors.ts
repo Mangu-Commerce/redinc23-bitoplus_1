@@ -14,20 +14,22 @@ import type { SummaryPayload, DividendRow } from './schemas.js';
 export function parseMoney(val: unknown): number | null {
   if (val === null || val === undefined) return null;
   const s = String(val).replace(/[$,\s]/g, '').trim();
-  if (!s || s.toLowerCase() === 'n/a' || s === '--' || s === '0.00') return null;
+  if (!s || s.toLowerCase() === 'n/a' || s === '--') return null;
   const f = parseFloat(s);
   return isNaN(f) || !isFinite(f) ? null : f;
 }
 
 /**
  * Extract the last sale price from a validated summary payload.
- * Tries multiple field names in priority order.
+ * Tries multiple field names in priority order, including nested primaryData.
  */
 export function extractPrice(summaryData: SummaryPayload | null): number | null {
   if (!summaryData?.data) return null;
   const d = summaryData.data;
+
   return (
     parseMoney(d.lastSalePrice) ??
+    parseMoney(d.primaryData?.lastSalePrice) ??
     parseMoney(d.lastSale) ??
     parseMoney(d.lastTrade) ??
     null
@@ -36,6 +38,7 @@ export function extractPrice(summaryData: SummaryPayload | null): number | null 
 
 /**
  * Extract the 52-week price range from a validated summary payload.
+ * Handles both flat fields and the combined string "High/Low" in summaryData.
  */
 export function extract52WRange(summaryData: SummaryPayload | null): {
   low: number | null;
@@ -43,10 +46,23 @@ export function extract52WRange(summaryData: SummaryPayload | null): {
 } {
   if (!summaryData?.data) return { low: null, high: null };
   const d = summaryData.data;
-  return {
-    low: parseMoney(d.fiftyTwoWeekLow) ?? parseMoney(d.yearLow) ?? null,
-    high: parseMoney(d.fiftyTwoWeekHigh) ?? parseMoney(d.yearHigh) ?? null,
-  };
+
+  // Try flat fields first
+  let low = parseMoney(d.fiftyTwoWeekLow) ?? parseMoney(d.yearLow);
+  let high = parseMoney(d.fiftyTwoWeekHigh) ?? parseMoney(d.yearHigh);
+
+  // If missing, try parsing the combined string (e.g. "$288.62/$169.21" or "300.00/150.00")
+  if ((low === null || high === null) && d.summaryData?.FiftyTwoWeekHighLow?.value) {
+    const val = d.summaryData.FiftyTwoWeekHighLow.value;
+    const parts = val.split('/');
+    if (parts.length === 2) {
+      // Nasdaq often displays "High/Low"
+      high = high ?? parseMoney(parts[0]);
+      low = low ?? parseMoney(parts[1]);
+    }
+  }
+
+  return { low, high };
 }
 
 /**

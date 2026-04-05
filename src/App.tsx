@@ -20,9 +20,8 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GoogleGenAI } from '@google/genai';
 
-import type { TickerSeed, BatchEnrichResponse } from './shared/api';
+import type { TickerSeed, BatchEnrichResponse, InsightResponse } from './shared/api';
 import {
   buildInitialStore,
   applyResults,
@@ -38,8 +37,6 @@ import {
   formatFrequency,
   formatAvgYield,
 } from './ui/format';
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
 // Map asset type to the correct Nasdaq URL path segment
 function nasdaqPath(assetType: string | undefined, ticker: string): string {
@@ -63,6 +60,8 @@ export default function App() {
   // Gemini Insights state
   const [insightQuery, setInsightQuery] = useState('');
   const [insightResponse, setInsightResponse] = useState('');
+  const [insightWarnings, setInsightWarnings] = useState<string[]>([]);
+  const [insightError, setInsightError] = useState('');
   const [isGeneratingInsight, setIsGeneratingInsight] = useState(false);
 
   // Load seed list on mount
@@ -81,8 +80,8 @@ export default function App() {
     if (isEnriching || seeds.length === 0) return;
     setIsEnriching(true);
 
-    // Reset all entries to 'loading' before the batch call
-    setStore(buildInitialStore(seeds));
+    // Transition entries to 'loading' without wiping prior data
+    setStore(prev => buildInitialStore(seeds, prev));
 
     try {
       const res = await fetch('/api/v2/enrich', {
@@ -97,36 +96,63 @@ export default function App() {
       setStore(prev => applyResults(prev, results));
     } catch (err) {
       console.error('Batch enrich failed:', err);
-      // Restore seed state so tickers don't stay stuck on 'loading'
-      setStore(buildInitialStore(seeds));
+      // We don't need to overwrite on failure, existing state can just remain loading or we can mark them error.
+      // But keeping it robust:
+      setStore(prev => buildInitialStore(seeds, prev));
     } finally {
       setIsEnriching(false);
     }
   }, [seeds, isEnriching]);
 
   const generateInsight = async () => {
-    if (!insightQuery || isGeneratingInsight) return;
+    if (!insightQuery.trim() || isGeneratingInsight) return;
     setIsGeneratingInsight(true);
-    setInsightResponse('');
+    setInsightError('');
+    setInsightWarnings([]);
+    // Purposefully NOT clearing setInsightResponse('') here to preserve previous answer until new returns
+
+    const tickers = ([...store.values()] as TickerState[])
+      .filter(s => s.status === 'success' && s.data)
+      .slice(0, 20)
+      .map(s => ({
+        symbol: s.ticker,
+        name: null,
+        price: s.data?.lastPrice ?? null,
+        annualDividend: s.data?.annualDiv ?? null,
+        dividendYield: s.data?.yieldTtm ?? null,
+        exDividendDate: s.data?.exDate ?? null,
+        paymentFrequency: s.data?.frequency ?? null,
+      }));
+
+    if (tickers.length === 0) {
+      setInsightError('No enriched ticker data available yet. Click "Enrich Data" first.');
+      setIsGeneratingInsight(false);
+      return;
+    }
 
     try {
-      const successfulData = ([...store.values()] as TickerState[])
-        .filter(s => s.status === 'success' && s.data)
-        .slice(0, 20)
-        .map(s => s.data);
-
-      const dataContext = JSON.stringify(successfulData);
-      const prompt = `You are a financial analyst. Based on the following dividend data for high-yield ETFs: ${dataContext}. Answer the user's question: ${insightQuery}. Keep it concise and professional.`;
-
-      const result = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents: prompt,
+      const res = await fetch('/api/insights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: insightQuery.trim(), tickers }),
       });
 
-      setInsightResponse(result.text || 'No response generated.');
-    } catch (e) {
-      console.error(e);
-      setInsightResponse('Failed to generate insight. Please check your API key.');
+      const data = await res.json() as InsightResponse | { error?: string };
+      if (!res.ok) {
+        throw new Error('error' in data && typeof data.error === 'string'
+          ? data.error
+          : `HTTP ${res.status}`);
+      }
+
+      setInsightResponse((data as InsightResponse).answer);
+      setInsightWarnings((data as InsightResponse).warnings);
+    } catch (error) {
+      console.error(error);
+      setInsightError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to generate insight. Server may be missing API key.',
+      );
     } finally {
       setIsGeneratingInsight(false);
     }
@@ -301,7 +327,7 @@ export default function App() {
                           <div className="flex items-center gap-2">
                             <span className="font-mono font-bold text-orange-500">{state.ticker}</span>
                             {isError && (
-                              <AlertCircle className="w-3 h-3 text-red-400" title={d?.error} />
+                              <AlertCircle className="w-3 h-3 text-red-400" title={state.error ?? d?.error} />
                             )}
                             <a
                               href={nasdaqPath(d?.assetType, state.ticker)}
@@ -317,7 +343,7 @@ export default function App() {
                         {/* Yield TTM */}
                         <td className="px-6 py-4">
                           <span className="text-green-400 font-medium">
-                            {state.status === 'loading'
+                            {state.status === 'loading' && !d
                               ? <span className="text-zinc-600 animate-pulse">…</span>
                               : formatYield(d?.yieldTtm ?? state.yieldHint)}
                           </span>
@@ -325,29 +351,29 @@ export default function App() {
 
                         {/* Price */}
                         <td className="px-6 py-4 font-mono text-sm">
-                          {state.status === 'loading'
+                          {state.status === 'loading' && !d
                             ? <span className="text-zinc-600 animate-pulse">…</span>
                             : formatCurrency(d?.lastPrice ?? null)}
                         </td>
 
                         {/* Annual Div */}
                         <td className="px-6 py-4 font-mono text-sm">
-                          {state.status === 'loading'
+                          {state.status === 'loading' && !d
                             ? <span className="text-zinc-600 animate-pulse">…</span>
                             : formatCurrency(d?.annualDiv ?? null)}
                         </td>
 
                         {/* Frequency */}
                         <td className="px-6 py-4">
-                          {state.status === 'loading' ? (
+                          {state.status === 'loading' && !d ? (
                             <span className="text-zinc-600 animate-pulse">…</span>
                           ) : (
                             <span className={`text-xs px-2 py-0.5 rounded-full border ${
                               d?.frequency === 'Monthly'
                                 ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'
                                 : d?.frequency === 'Quarterly'
-                                ? 'bg-purple-500/10 border-purple-500/20 text-purple-400'
-                                : 'bg-zinc-500/10 border-zinc-500/20 text-zinc-400'
+                                  ? 'bg-purple-500/10 border-purple-500/20 text-purple-400'
+                                  : 'bg-zinc-500/10 border-zinc-500/20 text-zinc-400'
                             }`}>
                               {formatFrequency(d?.frequency ?? null)}
                             </span>
@@ -356,21 +382,21 @@ export default function App() {
 
                         {/* 52W Range */}
                         <td className="px-6 py-4 text-xs text-zinc-400 font-mono">
-                          {state.status === 'loading'
+                          {state.status === 'loading' && !d
                             ? <span className="text-zinc-600 animate-pulse">…</span>
                             : formatRange(d?.range52W?.low ?? null, d?.range52W?.high ?? null)}
                         </td>
 
                         {/* Ex-Date */}
                         <td className="px-6 py-4 text-sm text-zinc-300">
-                          {state.status === 'loading'
+                          {state.status === 'loading' && !d
                             ? <span className="text-zinc-600 animate-pulse">…</span>
                             : formatDate(d?.exDate ?? null)}
                         </td>
 
                         {/* Pay Date */}
                         <td className="px-6 py-4 text-sm text-zinc-300">
-                          {state.status === 'loading'
+                          {state.status === 'loading' && !d
                             ? <span className="text-zinc-600 animate-pulse">…</span>
                             : formatDate(d?.payDate ?? null)}
                         </td>
@@ -402,7 +428,7 @@ export default function App() {
             />
             <button
               onClick={generateInsight}
-              disabled={isGeneratingInsight || !insightQuery}
+              disabled={isGeneratingInsight || !insightQuery.trim()}
               className="bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-black px-4 py-2 rounded-xl transition-colors flex items-center gap-2"
             >
               {isGeneratingInsight
@@ -411,6 +437,18 @@ export default function App() {
               Analyze
             </button>
           </div>
+          {insightError && (
+            <div className="mt-4 p-4 bg-red-950/40 border border-red-900 rounded-xl text-sm text-red-300">
+              {insightError}
+            </div>
+          )}
+          {insightWarnings.length > 0 && (
+            <div className="mt-4 p-4 bg-yellow-950/30 border border-yellow-900 rounded-xl text-sm text-yellow-200">
+              {insightWarnings.map(warning => (
+                <div key={warning}>{warning}</div>
+              ))}
+            </div>
+          )}
           {insightResponse && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}

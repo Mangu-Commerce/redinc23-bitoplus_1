@@ -133,6 +133,10 @@ async function fetchAndEnrich(
 
     const hasUsableData = lastPrice !== null || events.length > 0;
 
+    if (!hasUsableData) {
+      console.warn(`[${ticker}] Missing usable data. Price found: ${lastPrice != null}, Dividends count: ${events.length}`);
+    }
+
     return {
       ticker,
       assetType,
@@ -148,6 +152,7 @@ async function fetchAndEnrich(
       payDate: mostRecent?.payDate ?? null,
     };
   } catch (err) {
+    console.error(`[${ticker}] Enrichment Error:`, err);
     return {
       ...base,
       status: 'error',

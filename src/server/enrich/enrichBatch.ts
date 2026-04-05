@@ -17,11 +17,15 @@ import type { EnrichedTickerResponse, TickerSeed } from '../../shared/api.js';
  */
 export async function enrichBatch(
   seeds: TickerSeed[],
-  concurrency = 5,
+  concurrency = 2,
 ): Promise<EnrichedTickerResponse[]> {
   const limit = pLimit(concurrency);
   const tasks = seeds.map(seed =>
-    limit(() => enrichOne(seed.ticker, seed.yieldHint)),
+    limit(async () => {
+      // Tiny jitter/gap to stay under rate limit
+      await new Promise(r => setTimeout(r, Math.random() * 50 + 50));
+      return enrichOne(seed.ticker, seed.yieldHint);
+    }),
   );
   return Promise.all(tasks);
 }
